@@ -1,194 +1,66 @@
 package main
 
 import (
-	"bufio"
 	"database/sql"
 	"fmt"
-	"log"
-	"os"
+	"net/http"
 	"strconv"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
 type Book struct {
-	ID     int
-	Name   string
-	Author string
-	Year   int
-	Price  float64
-	Stock  int
+	ID     int     `json:"id"`
+	Name   string  `json:"name"`
+	Author string  `json:"author"`
+	Year   int     `json:"year"`
+	Price  float64 `json:"price"`
+	Stock  int     `json:"stock"`
 }
 
 type Payment struct {
-	ID            int
-	BookID        int
-	PaymentValue  float64
-	PaymentMethod string
+	ID            int       `json:"id"`
+	BookID        int       `json:"book_id"`
+	PaymentValue  float64   `json:"payment_value"`
+	PaymentMethod string    `json:"payment_method"`
+	PaymentDate   time.Time `json:"payment_date"`
 }
 
 var (
 	db *sql.DB
 )
 
-func main() {
-	var err error
-	db, err = sql.Open("mysql", "root:123456@tcp(127.0.0.1:3306)/library_db")
-	if err != nil {
-		panic(err)
+func createBook(c echo.Context) error {
+	b := new(Book)
+	if err := c.Bind(b); err != nil {
+		return echo.NewHTTPError(http.StatusUnprocessableEntity)
 	}
-	defer db.Close()
-	fmt.Println("Database connected successfully")
 
-	scanner := bufio.NewScanner(os.Stdin)
-
-	for {
-		fmt.Println("\nEscolha uma opção:")
-		fmt.Println("1. Inserir um novo livro")
-		fmt.Println("2. Listar todos os livros")
-		fmt.Println("3. Comprar um livro")
-		fmt.Println("0. Sair")
-
-		var choice int
-		fmt.Print("Escolha: ")
-		fmt.Scan(&choice)
-		scanner.Scan()
-
-		switch choice {
-		case 1:
-			var book Book
-			fmt.Println("Inserir um novo livro")
-			
-			fmt.Print("Nome: ")
-			book.Name = readString(scanner)
-			fmt.Print("Autor: ")
-			book.Author = readString(scanner)
-			fmt.Print("Ano: ")
-			book.Year = readInt(scanner)
-			fmt.Print("Preço: ")
-			book.Price = readFloat(scanner)
-			fmt.Print("Estoque: ")
-			book.Stock = readInt(scanner)
-
-			err = insertBook(book)
-			if err != nil {
-				log.Println("Erro ao inserir o livro:", err)
-			}
-
-		case 2:
-			fmt.Println("Listar todos os livros")
-			books, err := getAllBooks()
-			if err != nil {
-				log.Println("Erro ao listar os livros:", err)
-				continue
-			}
-
-			for _, book := range books {
-				fmt.Printf("ID: %d, Nome: %s, Autor: %s, Ano: %d, Preço: %.2f, Estoque: %d\n",
-					book.ID, book.Name, book.Author, book.Year, book.Price, book.Stock)
-			}
-
-		case 3:
-			var bookID int
-			var paymentMethod string
-			fmt.Println("Comprar um livro")
-			fmt.Print("ID do livro: ")
-			fmt.Scan(&bookID)
-			
-			fmt.Println("Métodos de pagamento disponíveis:")
-			fmt.Println("1. Crédito")
-			fmt.Println("2. Débito")
-			fmt.Println("3. Boleto")
-			fmt.Println("4. Pix")
-			fmt.Println("5. Dinheiro")
-			fmt.Print("Escolha o método de pagamento (1-5): ")
-			var methodChoice int
-			fmt.Scan(&methodChoice)
-
-			switch methodChoice {
-			case 1:
-				paymentMethod = "Crédito"
-			case 2:
-				paymentMethod = "Débito"
-			case 3:
-				paymentMethod = "Boleto"
-			case 4:
-				paymentMethod = "Pix"
-			case 5:
-				paymentMethod = "Dinheiro"
-			default:
-				fmt.Println("Método de pagamento inválido.")
-				continue
-			}
-
-			err := buyBook(bookID, paymentMethod)
-			if err != nil {
-				log.Println("Erro ao comprar o livro:", err)
-			}
-
-		case 0:
-			fmt.Println("Saindo...")
-			os.Exit(0)
-
-		default:
-			fmt.Println("Opção inválida. Tente novamente.")
-		}
-	}
-}
-
-func readString(scanner *bufio.Scanner) string {
-	scanner.Scan()
-	return scanner.Text()
-}
-
-func readInt(scanner *bufio.Scanner) int {
-	var input string
-	scanner.Scan()
-	input = scanner.Text()
-	value, err := strconv.Atoi(input)
-	if err != nil {
-		fmt.Println("Erro ao ler o número:", err)
-		return 0
-	}
-	return value
-}
-
-func readFloat(scanner *bufio.Scanner) float64 {
-	var input string
-	scanner.Scan()
-	input = scanner.Text()
-	value, err := strconv.ParseFloat(input, 64)
-	if err != nil {
-		fmt.Println("Erro ao ler o número:", err)
-		return 0
-	}
-	return value
-}
-
-func insertBook(book Book) error {
 	sqlStatement := `
     INSERT INTO books (name, author, year, price, stock)
     VALUES (?,?,?,?,?)`
 
 	stmt, err := db.Prepare(sqlStatement)
 	if err != nil {
-		return err
+		return echo.NewHTTPError(http.StatusBadGateway)
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(book.Name, book.Author, book.Year, book.Price, book.Stock)
+	_, err = stmt.Exec(b.Name, b.Author, b.Year, b.Price, b.Stock)
 	if err != nil {
-		return err
+		return echo.NewHTTPError(http.StatusBadGateway)
 	}
-	fmt.Println("New book inserted successfully")
-	return nil
+	
+	return c.JSON(http.StatusCreated, b)
 }
 
-func getAllBooks() ([]Book, error) {
+func listBooks(c echo.Context) error {
 	rows, err := db.Query("SELECT id, name, author, year, price, stock FROM books")
 	if err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusInternalServerError)
 	}
 	defer rows.Close()
 
@@ -198,45 +70,53 @@ func getAllBooks() ([]Book, error) {
 		var book Book
 		err := rows.Scan(&book.ID, &book.Name, &book.Author, &book.Year, &book.Price, &book.Stock)
 		if err != nil {
-			return nil, err
+			return echo.NewHTTPError(http.StatusInternalServerError)
 		}
 		books = append(books, book)
 	}
 
 	if err = rows.Err(); err != nil {
-		return nil, err
+		return echo.NewHTTPError(http.StatusInternalServerError)
 	}
 
-	return books, nil
+	return c.JSON(http.StatusOK, books)
 }
 
-func buyBook(bookID int, paymentMethod string) error {
+func buyBook(c echo.Context) error {
+	id := c.Param("id")
 	var stock int
 	var price float64
-	err := db.QueryRow("SELECT stock, price FROM books WHERE id = ?", bookID).Scan(&stock, &price)
+	err := db.QueryRow("SELECT stock, price FROM books WHERE id = ?", id).Scan(&stock, &price)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("Book not found")
+			return echo.NewHTTPError(http.StatusNotFound, "Book not found")
 		}
-		return err
+		return echo.NewHTTPError(http.StatusBadGateway)
 	}
 
 	if stock <= 0 {
-		return fmt.Errorf("Book out of stock")
+		return echo.NewHTTPError(http.StatusUnauthorized, "Book out of stock")
 	}
 
 	sqlStatement := `UPDATE books SET stock = stock - 1 WHERE id = ?`
 	stmt, err := db.Prepare(sqlStatement)
 	if err != nil {
-		return err
+		return echo.NewHTTPError(http.StatusBadGateway)
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(bookID)
-	if err!= nil {
-        return err
-    }
-	fmt.Printf("Book %d purchased successfully. Remaining stock: %d\n", bookID, stock-1)
+	_, err = stmt.Exec(id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadGateway)
+	}
+
+	payment := new(Payment)
+	if err := c.Bind(payment); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid payment input"})
+	}
+	payment.BookID = atoi(id)
+	payment.PaymentValue = price
+	payment.PaymentDate = time.Now()
 
 	sqlPayment := `
     INSERT INTO payments (book_id, payment_value, payment_method, payment_date)
@@ -247,10 +127,39 @@ func buyBook(bookID int, paymentMethod string) error {
 		return err
 	}
 	defer stmtPay.Close()
-	_, err = stmtPay.Exec(bookID, price, paymentMethod)
-	if err!= nil {
-        return err
-    }
-	fmt.Printf("Payment for book %d recorded successfully\n", bookID)
-	return nil
+	_, err = stmtPay.Exec(payment.BookID, payment.PaymentValue, payment.PaymentMethod)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError)
+	}
+	
+	return c.JSON(http.StatusOK, payment)
+}
+
+func atoi(s string) int {
+	val, _ := strconv.Atoi(s)
+	return val
+}
+
+func main() {
+	var err error
+	db, err = sql.Open("mysql", "root:123456@tcp(127.0.0.1:3306)/library_db")
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	fmt.Println("Database connected successfully")
+
+	// Echo instance
+	e := echo.New()
+
+	// Middleware
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
+
+	// Routes
+	e.POST("/books", createBook)
+	e.GET("/books", listBooks)
+	e.POST("/books/:id/buy", buyBook)
+
+	e.Logger.Fatal(e.Start(":1323"))
 }
